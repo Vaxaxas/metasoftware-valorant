@@ -1,0 +1,24 @@
+{
+    "aim": {
+        "fov": 25,
+        "kSensitivity": 0.13099999725818634,
+        "kSlowdownThreshold": 20.0,
+        "key": "MOUSE_RIGHT"
+    },
+    "image_processing": {
+        "color": {
+            "enemy_outline": "purple"
+        },
+        "dilation_size": 1,
+        "kDistanceThreshold": 250.0
+    },
+    "safety": {
+        "panic_button": 35
+    },
+    "visuals": {
+        "fuser": false,
+        "gui": {
+            "show_menu": 45
+        }
+    }
+}

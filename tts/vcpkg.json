@@ -1,0 +1,8 @@
+{
+  "name": "tts",
+  "license": "MIT",
+  "dependencies": [
+    "curl",
+    "nlohmann-json"
+  ]
+}
