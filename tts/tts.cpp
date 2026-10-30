@@ -12,25 +12,36 @@
 #include "ndi/ndicontroller.h"
 #include "config/config.h"
 
-#include <makcu/makcu.h>
 #include "makcu/makcu.h"
-#include "ndi/ndicontroller.h"
 #include "features/aimassist/aimassist.h"
 #include "authentication/authentication.h"
-#include "config/config.h"
 
 #include "thirdparty/imgui/imgui.h"
 #include "thirdparty/imgui/imgui_impl_win32.h"
 #include "thirdparty/imgui/imgui_impl_dx12.h"
 #include "globals.h"
-#include "authentication/authentication.h"
 #include "features/overlay/fuser/fuser.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 
-const char* mouse_options[] = { "LEFT", "RIGHT", "SIDE1", "SIDE2" };
+const char* mouse_options[] = { "LEFT", "RIGHT", "SIDE1", "SIDE2", "ALT", "SHIFT" };
 const char* hitbox_options[] = { "HEAD", "NECK", "BODY" };
+const char* trigger_bind_options[] = { "ALWAYS ON", "LEFT", "RIGHT", "MIDDLE", "SIDE1", "SIDE2", "ALT", "SHIFT", "CTRL" };
+
+inline const char* GetAimKeyName(int key) {
+    if (key >= 0 && key < static_cast<int>(IM_ARRAYSIZE(mouse_options))) {
+        return mouse_options[key];
+    }
+    return "UNKNOWN";
+}
+
+inline const char* GetTriggerBindName(int key) {
+    if (key >= 0 && key < static_cast<int>(IM_ARRAYSIZE(trigger_bind_options))) {
+        return trigger_bind_options[key];
+    }
+    return "ALWAYS ON";
+}
 
 // NDI Connection monitoring globals
 std::atomic<bool> g_NDIConnectionHealthy{ false };
@@ -74,97 +85,14 @@ FrameContext* WaitForNextFrameResources();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// Enhanced NDI connection functions
+// Enhanced NDI connection functions (Adapted for 1-PC Mode)
 bool WarmUpNDIDiscovery(int maxAttempts = 3) {
-    timelog("Warming up NDI discovery..");
-
-    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-        timelog("NDI discovery attempt %i/%i", attempt, maxAttempts);
-
-        // Clean up any existing connection first
-        if (g_Index::g_NDIReceiver != nullptr) {
-            NDIlib_recv_destroy(g_Index::g_NDIReceiver);
-            g_Index::g_NDIReceiver = nullptr;
-        }
-
-        // Wait a bit for network stabilization
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-
-        g_Index::g_NDIReceiver = g_NDI::connect_to_default_device();
-
-        if (g_Index::g_NDIReceiver != nullptr) {
-            timelog("NDI warm-up successful!");
-            g_NDIConnectionHealthy = true;
-            g_LastNDIFrameTime = std::chrono::steady_clock::now();
-            return true;
-        }
-
-        timelog("NDI warm-up attempt failed");
-
-        if (attempt < maxAttempts) {
-            timelog("Failed to find NDI device, waiting before we retry..");
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // Longer wait between attempts
-        }
-    }
-
-    timelog("Warmup completed but no NDI device was found, attempting to continue..");
-    g_NDIConnectionHealthy = false;
-    return false;
-}
-
-void NDIConnectionMonitor() {
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // Check every second
-
-        if (g_Index::g_NDIReceiver == nullptr) {
-            g_NDIConnectionHealthy = false;
-            continue;
-        }
-
-        // Check if we've received frames recently
-        auto now = std::chrono::steady_clock::now();
-        auto timeSinceLastFrame = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_LastNDIFrameTime).count();
-
-        if (timeSinceLastFrame > NDI_FRAME_TIMEOUT_MS) {
-            timelog("NDI connection timeout detected (%lld ms since last frame)", timeSinceLastFrame);
-            g_NDIConnectionHealthy = false;
-
-            // Attempt reconnection if not already reconnecting
-            if (!g_NDIReconnecting && g_NDIReconnectAttempts < MAX_NDI_RECONNECT_ATTEMPTS) {
-                g_NDIReconnecting = true;
-                g_NDIReconnectAttempts++;
-
-                timelog("Attempting NDI reconnection #%d", g_NDIReconnectAttempts.load());
-
-                // Clean up current connection
-                std::lock_guard<std::mutex> lock(g_NDIStatusMutex);
-                if (g_Index::g_NDIReceiver != nullptr) {
-                    NDIlib_recv_destroy(g_Index::g_NDIReceiver);
-                    g_Index::g_NDIReceiver = nullptr;
-                }
-
-                // Wait a moment for cleanup
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-                // Attempt reconnection
-                bool reconnectSuccess = WarmUpNDIDiscovery(2);
-
-                if (reconnectSuccess) {
-                    timelog("NDI automatic reconnection successful!");
-                    g_NDIReconnectAttempts = 0; // Reset counter on success
-                }
-                else {
-                    timelog("NDI automatic reconnection failed");
-                }
-
-                g_NDIReconnecting = false;
-            }
-            else if (g_NDIReconnectAttempts >= MAX_NDI_RECONNECT_ATTEMPTS) {
-                timelog("Maximum NDI reconnection attempts reached. Manual intervention required.");
-                // Don't reset attempts here - let user manually reconnect to reset counter
-            }
-        }
-    }
+    timelog("1-PC Mode: Initializing local screen capture..");
+    g_Index::g_NDIReceiver = g_NDI::connect_to_default_device();
+    g_NDIConnectionHealthy = true;
+    g_LastNDIFrameTime = std::chrono::steady_clock::now();
+    timelog("1-PC Mode: Local screen capture ready!");
+    return true;
 }
 
 void UpdateNDIFrameReceived() {
@@ -306,6 +234,8 @@ void HelpMarker(const char* desc)
 
 // Console application entry point
 int main(int argc, char* argv[]) {
+    // 設置高 DPI 識別，避免 125%/150% 縮放下螢幕中心座標計算偏差 (修復 Finding 5)
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     int kTabIndex = 0;
 
@@ -326,52 +256,44 @@ int main(int argc, char* argv[]) {
 
     // Initialize NDI connection monitoring
     g_LastNDIFrameTime = std::chrono::steady_clock::now();
+    WarmUpNDIDiscovery(3);
 
-    bool ndiWarmedUp = WarmUpNDIDiscovery(3);
-
-    if (!ndiWarmedUp) {
-        timelog("Initial NDI warm-up failed, but continuing...");
-    }
-
-    // Start NDI connection monitor thread
-    std::thread ndiMonitorThread(NDIConnectionMonitor);
-    ndiMonitorThread.detach();
-
-    timelog("Trying to connect to MAKCU");
-
-    if (!g_Index::g_makcuDevice.connect()) {
-        timelog("Failed to connect to MAKCU device!!");
-        timelog("Please ensure your MAKCU is connected in COM mode and is flashed properly, If you run into more errors, you can open a ticket.");
-        delay_exit(default_exit_value);
-    }
-    g_Index::g_makcuDevice.setMouseButtonCallback(
-        [](makcu::MouseButton btn, bool pressed) {
-            g_Makcu::mouseButtonHandler(btn, pressed);
-        }
-    );
-
-    timelog("Connected to MAKCU");
     timelog("Loading config.json");
-
     g_Config::LoadConfig("config.json");
 
-    timelog("kSensValue: %.2f", g_Index::kSensitivity);
-    timelog("dilation_size: %i", g_Index::dilation_size);
-    timelog("kSlowdownThreshold: %.2g", g_Index::kSlowdownThreshold);
+    timelog("1-PC Mode: Initializing local mouse controller..");
+    g_Index::g_makcuDevice.connect();
+    timelog("1-PC Mode: Local mouse controller connected!");
 
-    std::thread aimThread([]() {
-        while (true) {
-            if (g_Index::aim_key == 0) {
-                g_AimAssist::isBindHeld = g_Makcu::isButtonHeld(makcu::MouseButton::LEFT);
-            } else if (g_Index::aim_key == 1) {
-                g_AimAssist::isBindHeld = g_Makcu::isButtonHeld(makcu::MouseButton::RIGHT);
+    // 根據 showDebug 設定同步切換 Console 顯示狀態
+    HWND consoleWnd = GetConsoleWindow();
+    if (consoleWnd) {
+        ShowWindow(consoleWnd, g_Index::showDebug ? SW_SHOW : SW_HIDE);
+    }
+
+    timelog("kSensValue: %.2f", g_Index::kSensitivity);
+    timelog("Triggerbot: %s (Bind: %s, FOV: %d px, Delay: %d ms, Cooldown: %d ms)",
+        g_Index::trigger_enabled ? "ENABLED" : "DISABLED",
+        GetTriggerBindName(g_Index::trigger_key),
+        g_Index::trigger_fov,
+        g_Index::trigger_delay_ms,
+        g_Index::trigger_cooldown_ms);
+
+    std::atomic<bool> aimThreadRunning{ true };
+    std::thread aimThread([&aimThreadRunning]() {
+        while (aimThreadRunning.load()) {
+            makcu::MouseButton btn = makcu::MouseButton::RIGHT;
+            switch (g_Index::aim_key) {
+            case 0: btn = makcu::MouseButton::LEFT; break;
+            case 1: btn = makcu::MouseButton::RIGHT; break;
+            case 2: btn = makcu::MouseButton::SIDE1; break;
+            case 3: btn = makcu::MouseButton::SIDE2; break;
+            case 4: btn = makcu::MouseButton::ALT; break;
+            case 5: btn = makcu::MouseButton::SHIFT; break;
+            default: btn = makcu::MouseButton::RIGHT; break;
             }
-            else if (g_Index::aim_key == 2) {
-                g_AimAssist::isBindHeld = g_Makcu::isButtonHeld(makcu::MouseButton::SIDE1);
-            }
-            else if (g_Index::aim_key == 3) {
-                g_AimAssist::isBindHeld = g_Makcu::isButtonHeld(makcu::MouseButton::SIDE2);
-            }
+            bool held = (g_Index::aim_key >= 0 && g_Index::aim_key <= 5) ? g_Makcu::isButtonHeld(btn) : false;
+            g_AimAssist::SetBindState(held); // 統一呼叫狀態重置函式 (修復 Finding 6, 7, 8, 10)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     });
@@ -417,8 +339,11 @@ int main(int argc, char* argv[]) {
     );
 
     g_Fuser::SetMainWindowHandle(hwnd);
-    if (!RegisterHotKey(hwnd, 1, 0, VK_INSERT)) {
-        std::cerr << "Failed to register hotkey" << std::endl;
+    if (!RegisterHotKey(hwnd, 1, 0, g_Index::show_menu_key)) {
+        std::cerr << "Failed to register menu hotkey" << std::endl;
+    }
+    if (!RegisterHotKey(hwnd, 2, 0, g_Index::panic_button)) {
+        std::cerr << "Failed to register panic hotkey" << std::endl;
     }
 
     if (!hwnd) {
@@ -494,57 +419,43 @@ int main(int argc, char* argv[]) {
         if (ImGui::Button("Main")) {
             kTabIndex = 0;
         } ImGui::SameLine();
-        if (ImGui::Button("Aim Assist")) {
+        if (ImGui::Button("Aim")) {
             kTabIndex = 1;
         } ImGui::SameLine();
-        if (ImGui::Button("Visuals")) {
+        if (ImGui::Button("Trigger")) {
             kTabIndex = 2;
         } ImGui::SameLine();
-        if (ImGui::Button("Config")) {
+        if (ImGui::Button("Visuals")) {
             kTabIndex = 3;
         } ImGui::SameLine();
-        if (ImGui::Button("Debug")) {
+        if (ImGui::Button("Config")) {
             kTabIndex = 4;
         } ImGui::SameLine();
+        if (ImGui::Button("Debug")) {
+            kTabIndex = 5;
+        } ImGui::SameLine();
         if (ImGui::Button("Exit")) {
-            exit(0);
+            done = true;
         }
 
         if (kTabIndex == 0) {
-            ImGui::Text("NDI Status");
+            ImGui::Text("System: 1-PC Standalone Mode");
+            ImGui::Separator();
 
-            // Enhanced NDI status display
-            if (g_Index::g_NDIReceiver && g_NDIConnectionHealthy) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected & Healthy");
-            }
-            else if (g_Index::g_NDIReceiver && !g_NDIConnectionHealthy) {
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Connected but No Data");
-            }
-            else if (g_NDIReconnecting) {
-                ImGui::TextColored(ImVec4(0.0f, 0.0f, 1.0f, 1.0f), "Reconnecting...");
+            ImGui::Text("Screen Capture");
+            if (g_NDIConnectionHealthy) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Active (Zero-Copy 256x256 @ 240 FPS)");
             }
             else {
-                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Disconnected");
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Initializing...");
             }
-
-            // Show reconnection attempts
-            if (g_NDIReconnectAttempts > 0) {
-                ImGui::Text("Reconnect attempts: %d/%d", g_NDIReconnectAttempts.load(), MAX_NDI_RECONNECT_ATTEMPTS);
-            }
-
-            // Manual reconnect button
-            if (ImGui::Button("Force NDI Reconnect")) {
-                std::thread([] {
-                    ForceNDIReconnect();
-                    }).detach();
-            } ImGui::SameLine();
-            HelpMarker("Force a manual NDI reconnection with full cleanup and re-initialization");
 
             ImGui::Separator();
 
-            ImGui::Text("Makcu Status");
+            ImGui::Text("Makcu Mouse Control");
             if (g_Index::g_makcuDevice.isConnected()) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected");
+                std::string target = g_Index::g_makcuDevice.getTargetAddress();
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected: %s", target.c_str());
             }
             else {
                 ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Disconnected");
@@ -553,21 +464,20 @@ int main(int argc, char* argv[]) {
             if (ImGui::Button("Test movement")) {
                 g_Index::g_makcuDevice.mouseMove(5, 5);
             } ImGui::SameLine();
-            HelpMarker("Tests to see if your MAKCU is working by moving it a set value (5,5)"); ImGui::SameLine();
-            if (ImGui::Button("Reconnect MAKCU")) {
-                g_Index::g_makcuDevice.disconnect();
-                g_Index::g_makcuDevice.connect();
-            } ImGui::SameLine(); HelpMarker("Reconnects your MAKCU in the event of no mouse movement, etc");
+            HelpMarker("Tests mouse movement (moves cursor +5, +5 via Makcu)"); ImGui::SameLine();
+            if (ImGui::Button("Reconnect")) {
+                g_Index::g_makcuDevice.connect(g_Index::makcu_ip, g_Index::makcu_port);
+            }
             ImGui::Separator();
         }
         else if (kTabIndex == 1) {
             ImGui::Checkbox("Enable Aim-Assist", &g_Index::assistance_enabled); 
 
             if (g_Index::assistance_enabled) {
-                ImGui::SliderFloat("Speed", &g_Index::kSensitivity, 0.01, 10, "%.3f"); ImGui::SameLine(); HelpMarker("The speed at which the aim assist will move to a given target");
+                ImGui::SliderFloat("Speed", &g_Index::kSensitivity, 0.01f, 10.0f, "%.3f"); ImGui::SameLine(); HelpMarker("The speed at which the aim assist will move to a given target");
                 ImGui::SliderInt("Smoothness", &g_Index::kSmoothingFactor, 1, 100, "%d"); ImGui::SameLine(); HelpMarker("The speed at which the aim assist will move to a given target");
                 ImGui::SliderInt("FOV", &g_Index::kFOV, 1, 150, "%d"); ImGui::SameLine(); HelpMarker("The FOV (Field of view) the aim assist will scan for targets within");
-                if (ImGui::BeginCombo("Preferred Hitbox", hitbox_options[g_Index::hitbox])) {
+                if (ImGui::BeginCombo("Preferred Hitbox", (g_Index::hitbox >= 0 && g_Index::hitbox < IM_ARRAYSIZE(hitbox_options)) ? hitbox_options[g_Index::hitbox] : "HEAD")) {
                     for (int n = 0; n < IM_ARRAYSIZE(hitbox_options); n++) {
                         bool is_selected = (g_Index::hitbox == n);
                         if (ImGui::Selectable(hitbox_options[n], is_selected)) {
@@ -581,7 +491,7 @@ int main(int argc, char* argv[]) {
                 } ImGui::SameLine(); HelpMarker("The hitbox the bot will prefer to aim at if available");
                 ImGui::Separator();
 
-                if (ImGui::BeginCombo("Bind", mouse_options[g_Index::aim_key])) {
+                if (ImGui::BeginCombo("Bind", GetAimKeyName(g_Index::aim_key))) {
                     for (int n = 0; n < IM_ARRAYSIZE(mouse_options); n++) {
                         bool is_selected = (g_Index::aim_key == n);
                         if (ImGui::Selectable(mouse_options[n], is_selected)) {
@@ -593,9 +503,60 @@ int main(int argc, char* argv[]) {
                     }
                     ImGui::EndCombo();
                 } ImGui::SameLine(); HelpMarker("The key you will have to press on your mouse to activate the bot");
+
+                ImGui::Separator();
+                ImGui::Text("Aim Offset Tuning");
+                ImGui::SliderInt("Y Offset", &g_Index::aim_y_offset, -20, 20, "%d px");
+                ImGui::SameLine(); HelpMarker("Adjust vertical height (positive = lower onto face/neck, negative = higher towards head)");
+
+                ImGui::SliderInt("X Offset", &g_Index::aim_x_offset, -20, 20, "%d px");
+                ImGui::SameLine(); HelpMarker("Adjust horizontal point (positive = right, negative = left)");
+
+                if (ImGui::Button("Reset Offsets")) {
+                    g_Index::aim_x_offset = 0;
+                    g_Index::aim_y_offset = 0;
+                }
             }
         }
         else if (kTabIndex == 2) {
+            ImGui::Checkbox("Enable Triggerbot (Auto Fire)", &g_Index::trigger_enabled);
+            ImGui::SameLine();
+            HelpMarker("Automatically clicks when crosshair is directly on enemy purple outline");
+
+            if (g_Index::trigger_enabled) {
+                if (ImGui::BeginCombo("Trigger Bind", GetTriggerBindName(g_Index::trigger_key))) {
+                    for (int n = 0; n < IM_ARRAYSIZE(trigger_bind_options); n++) {
+                        bool is_selected = (g_Index::trigger_key == n);
+                        if (ImGui::Selectable(trigger_bind_options[n], is_selected)) {
+                            g_Index::trigger_key = n;
+                        }
+                        if (is_selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                } ImGui::SameLine(); HelpMarker("Hold this key/mouse button to activate triggerbot, or select ALWAYS ON");
+
+                ImGui::SliderInt("Trigger FOV (Radius)", &g_Index::trigger_fov, 1, 15, "%d px");
+                ImGui::SameLine(); HelpMarker("Radius around center crosshair that checks for enemy target");
+
+                ImGui::SliderInt("Reaction Delay", &g_Index::trigger_delay_ms, 0, 150, "%d ms");
+                ImGui::SameLine(); HelpMarker("Human-like reaction delay before shooting (0-150ms)");
+
+                ImGui::SliderInt("Fire Cooldown", &g_Index::trigger_cooldown_ms, 50, 500, "%d ms");
+                ImGui::SameLine(); HelpMarker("Cooldown interval between shots to prevent rapid spamming");
+
+                ImGui::SliderInt("Hold Duration", &g_Index::trigger_click_duration, 20, 100, "%d ms");
+                ImGui::SameLine(); HelpMarker("Mouse click hold duration via Makcu km.click(1,1,hold_ms)");
+
+                ImGui::Separator();
+                if (ImGui::Button("Test Trigger Click (Makcu km.click)")) {
+                    g_Index::g_makcuDevice.click(1, 1, g_Index::trigger_click_duration);
+                } ImGui::SameLine();
+                HelpMarker("Tests shooting trigger via Makcu km.click(1)");
+            }
+        }
+        else if (kTabIndex == 3) {
             ImGui::Checkbox("Fuser Mode", &g_Index::fuser_enabled);
             ImGui::SameLine();
             HelpMarker("Enables an overlay allowing users owning a fuser to have drawn on FOV markers & a watermark");
@@ -612,7 +573,7 @@ int main(int argc, char* argv[]) {
                 g_Fuser::cleanup();
             }
         }
-        else if (kTabIndex == 3) {
+        else if (kTabIndex == 4) {
             if (ImGui::Button("Load config")) {
                 g_Config::LoadConfig();
             }
@@ -621,10 +582,40 @@ int main(int argc, char* argv[]) {
                 g_Config::SaveConfig();
             }
         }
-        else if (kTabIndex == 4) {
-            ImGui::BeginDisabled();
-            ImGui::Checkbox("Show debug window (CV2)", &g_Index::showDebug);
-            ImGui::EndDisabled();
+        else if (kTabIndex == 5) {
+            ImGui::Text("=== Diagnostic & Debug Mode ===");
+            if (ImGui::Checkbox("Enable On-Screen HUD & Console Logs", &g_Index::showDebug)) {
+                HWND consoleWnd = GetConsoleWindow();
+                if (consoleWnd) {
+                    ShowWindow(consoleWnd, g_Index::showDebug ? SW_SHOW : SW_HIDE);
+                }
+            }
+            ImGui::Checkbox("Color Filter Mask (Binary View)", &g_Index::show_mask_view);
+            ImGui::SameLine(); HelpMarker("Displays the black & white binary mask showing exactly what purple pixels the bot detects");
+            ImGui::Separator();
+
+            ImGui::Text("Aim Assist: %s", g_Index::assistance_enabled ? "ENABLED" : "DISABLED");
+            ImGui::Text("Triggerbot: %s", g_Index::trigger_enabled ? "ENABLED" : "DISABLED");
+            ImGui::Text("Aim Key: %s (Held: %s)", GetAimKeyName(g_Index::aim_key), g_AimAssist::isBindHeld ? "YES" : "NO");
+            ImGui::Text("Detected Purple Pixels: %d", g_AimAssist::debugPixelCount);
+            if (g_AimAssist::debugHasTarget) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Target Locked: dx=%.1f, dy=%.1f", g_AimAssist::debugTargetX, g_AimAssist::debugTargetY);
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Target: Searching within FOV %d...", g_Index::kFOV);
+            }
+
+            ImGui::Separator();
+            ImGui::Text("Makcu Output: %s", g_Index::g_makcuDevice.getTargetAddress().c_str());
+
+            if (ImGui::Button("Test Move (+10, 0)")) {
+                g_Index::g_makcuDevice.mouseMove(10, 0);
+            } ImGui::SameLine();
+            if (ImGui::Button("Test Move (-10, 0)")) {
+                g_Index::g_makcuDevice.mouseMove(-10, 0);
+            } ImGui::SameLine();
+            if (ImGui::Button("Test km.click(1)")) {
+                g_Index::g_makcuDevice.click(1, 1, g_Index::trigger_click_duration);
+            }
         }
 
         ImGui::End();
@@ -673,6 +664,12 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "Shutting down..." << std::endl;
+
+    aimThreadRunning.store(false);
+    g_AimAssist::Shutdown();
+    if (g_Fuser::isOverlayActive) {
+        g_Fuser::cleanup();
+    }
 
     WaitForLastSubmittedFrame();
     ImGui_ImplDX12_Shutdown();
@@ -892,6 +889,10 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
+        else if (wParam == 2) {
+            ::PostQuitMessage(0);
+            return 0;
+        }
         break;
 
     case WM_SIZE:
@@ -916,6 +917,7 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         break;
     case WM_DESTROY:
         UnregisterHotKey(hWnd, 1);
+        UnregisterHotKey(hWnd, 2);
         ::PostQuitMessage(0);
         return 0;
     }

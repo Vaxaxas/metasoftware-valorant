@@ -43,7 +43,7 @@ namespace g_Fuser {
             int screenWidth = GetSystemMetrics(SM_CXSCREEN);
             int screenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-            SolidBrush blackBrush(Color(200, 0, 0, 0));
+            SolidBrush blackBrush(Color(255, 0, 0, 0));
             graphics.FillRectangle(&blackBrush, 0, 0, screenWidth, screenHeight);
 
             if (g_Index::draw_fov) {
@@ -61,7 +61,7 @@ namespace g_Fuser {
                 SolidBrush textBrush(Color(255, 255, 255, 255));
                 FontFamily fontFamily(L"Arial");
                 Font font(&fontFamily, 16, FontStyleRegular, UnitPixel);
-                graphics.DrawString(L"metasoftware.me", -1, &font,
+                graphics.DrawString(L"Overlay Active", -1, &font,
                     PointF(10, 10), &textBrush);
             }
 
@@ -86,7 +86,7 @@ namespace g_Fuser {
         wc.hInstance = GetModuleHandle(nullptr);
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-        wc.lpszClassName = L"FuserOverlay";
+        wc.lpszClassName = L" DXGIFrameHost";
 
         if (!RegisterClassExW(&wc)) {
             std::cerr << "Failed to register overlay window class" << std::endl;
@@ -98,9 +98,9 @@ namespace g_Fuser {
         int screenHeight = GetSystemMetrics(SM_CYSCREEN);
 
         overlayHwnd = CreateWindowExW(
-            WS_EX_LAYERED,
+            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             wc.lpszClassName,
-            L"Fuser Overlay",
+            L"",
             WS_POPUP | WS_VISIBLE,
             0, 0, screenWidth, screenHeight,
             nullptr, nullptr, wc.hInstance, nullptr
@@ -113,14 +113,10 @@ namespace g_Fuser {
             return;
         }
 
-        SetLayeredWindowAttributes(overlayHwnd, 0, 255, LWA_ALPHA);
+        SetLayeredWindowAttributes(overlayHwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
 
-        ShowWindow(overlayHwnd, SW_SHOW);
+        ShowWindow(overlayHwnd, SW_SHOWNOACTIVATE);
         UpdateWindow(overlayHwnd);
-
-        if (mainWindowHwnd) {
-            SetWindowPos(mainWindowHwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-        }
 
         MSG msg = {};
         while (!shouldExit) {
@@ -145,15 +141,6 @@ namespace g_Fuser {
                 lastFovValue = g_Index::kFOV;
                 InvalidateRect(overlayHwnd, nullptr, TRUE);
                 UpdateWindow(overlayHwnd);
-            }
-
-            if (mainWindowHwnd && overlayHwnd) {
-                HWND topWindow = GetForegroundWindow();
-                if (topWindow != mainWindowHwnd) {
-                    SetWindowPos(overlayHwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-                    SetWindowPos(mainWindowHwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-                    BringWindowToTop(mainWindowHwnd);
-                }
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(50));

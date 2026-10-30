@@ -1,0 +1,12 @@
+*.obj
+*.pdb
+*.tlog
+*.idb
+*.ilk
+*.iobj
+*.ipdb
+*.lastbuildstate
+*.log
+.vs/
+tts/x64/
+x64/

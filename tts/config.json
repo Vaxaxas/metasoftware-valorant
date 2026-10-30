@@ -1,10 +1,13 @@
 {
     "aim": {
-        "fov": 25,
-        "kSensitivity": 0.13099999725818634,
+        "enabled": true,
+        "fov": 65,
+        "hitbox": 0,
+        "kSensitivity": 0.35,
         "kSlowdownThreshold": 20.0,
-        "key": "MOUSE_RIGHT"
+        "key": 1
     },
+    "debug": true,
     "image_processing": {
         "color": {
             "enemy_outline": "purple"
@@ -12,8 +15,21 @@
         "dilation_size": 1,
         "kDistanceThreshold": 250.0
     },
+    "makcu": {
+        "ip": "192.168.137.19",
+        "port": 5005,
+        "use_udp": true
+    },
     "safety": {
         "panic_button": 35
+    },
+    "trigger": {
+        "click_duration": 50,
+        "cooldown_ms": 180,
+        "delay_ms": 35,
+        "enabled": false,
+        "fov": 4,
+        "key": 0
     },
     "visuals": {
         "fuser": false,
