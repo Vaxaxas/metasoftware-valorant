@@ -264,31 +264,7 @@ namespace makcu {
         }
     }
 
-    void Device::mouseSilent(int absX, int absY) {
-        if (m_useUdp) {
-            std::lock_guard<std::mutex> lock(m_sendMutex);
-            if (m_udpSocket != INVALID_SOCKET) {
-                char buf[64];
-                int len = std::snprintf(buf, sizeof(buf), "km.silent(%d,%d)\r\n", absX, absY);
-                if (len > 0) {
-                    sendto(m_udpSocket, buf, len, 0,
-                        reinterpret_cast<const sockaddr*>(&m_udpAddr), sizeof(m_udpAddr));
-                }
-            }
-        }
-        else {
-            mouseMoveTo(absX, absY);
-            click(1, 1, 50);
-        }
-    }
 
-    void Device::mouseMoveBezier(double x, double y, int duration_ms, double targetX, double targetY) {
-        int dx = static_cast<int>(std::lround(x));
-        int dy = static_cast<int>(std::lround(y));
-        // 依照 Makcu 官方 V4.086/V4.095 規範：
-        // aim tools 必須全面採用 km.move_now 於下一個 USB Report 立即輸出，徹底消除 km.move 的韌體插值佇列與過衝
-        mouseMove(dx, dy);
-    }
 }
 
 namespace g_Makcu {

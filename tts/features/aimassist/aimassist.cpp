@@ -18,9 +18,6 @@ extern void UpdateNDIFrameReceived();
 extern std::atomic<bool> g_NDIConnectionHealthy;
 
 namespace g_AimAssist {
-    cv::Scalar LOWER_COLOR;
-    cv::Scalar UPPER_COLOR;
-
     template<typename T>
     inline T clamp(const T& val, const T& min_val, const T& max_val) {
         return (val < min_val) ? min_val : ((val > max_val) ? max_val : val);
@@ -55,11 +52,13 @@ namespace g_AimAssist {
     Vector2 currentTarget(0, 0);
     Vector2 previousTarget(0, 0);
     Vector2 smoothedRawTarget(0, 0);
-    Vector2 targetVelocity(0, 0);
     Vector2 activeAimError(999.0, 999.0);
+    Vector2 inFlightStepPx(0.0, 0.0); // Smith Predictor: 上一幀已發出、尚在管線延遲中的預計螢幕像素位移
+    double currentRcsOffsetY = 0.0;
     bool crosshairInsideEnemy = false;
+    std::atomic<double> atomicAimErrorLen{ 999.0 };
+    std::atomic<bool> atomicCrosshairInside{ false };
     std::atomic<bool> triggerFiringLock{ false };
-    std::chrono::steady_clock::time_point lastShotTimestamp;
     bool hasSmoothedRaw = false;
     double remainderX = 0.0;
     double remainderY = 0.0;
@@ -68,12 +67,11 @@ namespace g_AimAssist {
     int stableFrames = 0;
     int onTargetFrames = 0;
 
-    constexpr double UPDATE_RATE = 144.0;
     constexpr double TARGET_JUMP_THRESHOLD = 150.0;
-    constexpr int STABILITY_FRAMES = 2;
-    constexpr double ON_TARGET_THRESHOLD = 8.0;
-    constexpr int ON_TARGET_FRAMES_REQUIRED = 3;
-    constexpr int MAX_STEP_PER_FRAME = 60;
+    constexpr int STABILITY_FRAMES = 1; // RAGE 0ms 啟動：首幀偵測即刻出槍
+    constexpr double ON_TARGET_THRESHOLD = 6.5;
+    constexpr int ON_TARGET_FRAMES_REQUIRED = 2;
+    constexpr int MAX_STEP_PER_FRAME = 320; // 解除單幀 60 counts 封印，支援遠距離單幀高速甩槍
 
     struct HitboxOffset {
         int x, y;
@@ -115,11 +113,11 @@ namespace g_AimAssist {
                     float v = maxRGB * 255.0f;
                     float h_half = h * 0.5f;
 
-                    // 嚴格的 Valorant Tritanopia 敵人紫色色彩過濾
+                    // 嚴格的 Valorant Tritanopia 敵人紫色色彩過濾 (放寬 b - r <= 42 以完整涵蓋陰暗處紫框)
                     bool isPurple = (h_half >= 135.0f && h_half <= 168.0f) &&
                                     (s >= 70.0f) && (v >= 90.0f) &&
                                     (r > g + 15) && (b > g + 15) &&
-                                    ((b - r) <= 22);
+                                    ((b - r) <= 42);
 
                     purpleLUT[r][g][b] = isPurple;
                     if (isPurple) totalPurple++;
@@ -194,8 +192,9 @@ namespace g_AimAssist {
             hasValidTarget = false;
             debugHasTarget = false;
             hasSmoothedRaw = false;
-            targetVelocity = Vector2(0, 0);
             activeAimError = Vector2(999.0, 999.0);
+            atomicAimErrorLen.store(999.0);
+            atomicCrosshairInside.store(false);
             return Vector2(0, 0);
         }
 
@@ -454,7 +453,7 @@ namespace g_AimAssist {
 
         // 4. 移植 jsonmeister/color-aimbot 多人同框防跳滯後保護 (Hysteresis) 與目標黏滯期：
         static int targetSwitchFrames = 0;
-        constexpr int PERSISTENCE_FRAMES_REQUIRED = 4; // 4 幀黏滯確認期 (~27ms)
+        constexpr int PERSISTENCE_FRAMES_REQUIRED = 2; // 2 幀極速確認期 (~13.8ms)，兼顧抗跳與多殺快速轉火
 
         if (hasSmoothedRaw && lockedCandidate.valid) {
             double jumpDist = (rawCandidate - smoothedRawTarget).Len();
@@ -478,32 +477,22 @@ namespace g_AimAssist {
             targetSwitchFrames = 0;
         }
 
-        // 5. 真零抖動硬體鎖死死區 + 移動敵人速度前饋補償 (Hard Deadband + Velocity Feed-Forward，受 GUI 死區動態調控)：
+        // 5. 真零抖動硬體鎖死死區 (Hard Deadband，受 GUI 死區動態調控)：
         if (!hasSmoothedRaw) {
             smoothedRawTarget = rawCandidate;
-            targetVelocity = Vector2(0, 0);
             hasSmoothedRaw = true;
         } else {
             Vector2 instVel = rawCandidate - smoothedRawTarget;
             double delta = instVel.Len();
             double deadbandThresh = static_cast<double>(g_Index::aim_deadzone) * 0.6; // 預設 2.5 * 0.6 = 1.5px
             if (g_Index::aim_deadzone > 0.05f && delta <= deadbandThresh) {
-                // 硬體級靜止死區：白點座標 100% 鎖定不動，速度衰減
-                targetVelocity = targetVelocity * 0.5;
+                // 硬體級靜止死區：白點座標 100% 鎖定不動
             } else if (g_Index::aim_deadzone > 0.05f && delta < deadbandThresh * 3.0) {
                 double alpha = (delta - deadbandThresh) / (deadbandThresh * 2.0);
-                Vector2 prev = smoothedRawTarget;
                 smoothedRawTarget = smoothedRawTarget + instVel * alpha;
-                targetVelocity = targetVelocity * 0.6 + (smoothedRawTarget - prev) * 0.4;
             } else {
-                // 高速移動或瞬間拉槍：100% 零延遲跟隨並更新移動速度向量
-                Vector2 prev = smoothedRawTarget;
+                // 高速移動或瞬間拉槍：100% 零延遲跟隨
                 smoothedRawTarget = rawCandidate;
-                if (delta < 35.0) {
-                    targetVelocity = targetVelocity * 0.5 + (smoothedRawTarget - prev) * 0.5;
-                } else {
-                    targetVelocity = Vector2(0, 0);
-                }
             }
         }
 
@@ -511,11 +500,12 @@ namespace g_AimAssist {
         debugHasTarget = true;
         debugTargetX = smoothedRawTarget.x;
         debugTargetY = smoothedRawTarget.y;
+        atomicCrosshairInside.store(crosshairInsideEnemy);
 
         return smoothedRawTarget;
     }
 
-    Vector2 ApplyHitboxOffset(const Vector2& target) {
+    Vector2 ApplyHitboxOffset(const Vector2& target, bool updateWander = true) {
         if (!hasValidTarget) return target;
 
         int hitboxIndex = clamp(g_Index::hitbox, 0, 2);
@@ -526,26 +516,40 @@ namespace g_AimAssist {
         static double humanWanderY = 0.0;
         static int wanderTick = 0;
 
-        if (g_Index::aim_humanizer_enabled) {
-            if (++wanderTick >= 8) { // 每 8 幀 (~55ms) 產生柔和的微動，模擬真人手部肌肉呼吸浮動
+        if (updateWander) {
+            if (g_Index::aim_humanizer_enabled) {
+                if (++wanderTick >= 8) { // 每 8 幀 (~55ms) 產生柔和的微動，模擬真人手部肌肉呼吸浮動
+                    wanderTick = 0;
+                    double angle = ((rand() % 360) * 3.141592653589793) / 180.0;
+                    double mag = ((rand() % 100) / 100.0) * static_cast<double>(g_Index::aim_humanizer_strength);
+                    humanWanderX = std::cos(angle) * mag;
+                    humanWanderY = std::sin(angle) * mag;
+                }
+            } else {
+                humanWanderX = 0.0;
+                humanWanderY = 0.0;
                 wanderTick = 0;
-                double angle = ((rand() % 360) * 3.141592653589793) / 180.0;
-                double mag = ((rand() % 100) / 100.0) * static_cast<double>(g_Index::aim_humanizer_strength);
-                humanWanderX = std::cos(angle) * mag;
-                humanWanderY = std::sin(angle) * mag;
             }
-        } else {
-            humanWanderX = 0.0;
-            humanWanderY = 0.0;
-            wanderTick = 0;
         }
 
         return Vector2(target.x + baseOffset.x + g_Index::aim_x_offset + humanWanderX,
-                       target.y + baseOffset.y + g_Index::aim_y_offset + humanWanderY);
+                       target.y + baseOffset.y + g_Index::aim_y_offset + humanWanderY + currentRcsOffsetY);
     }
 
     Vector2 ApplySmoothing(const Vector2& targetPos) {
         double distance = targetPos.Len();
+        double deadzone = static_cast<double>(g_Index::aim_deadzone);
+
+        // 進入死區立即停止並清零殘差與在途預測，防止在目標中心兩側微幅橫跳
+        if (distance <= deadzone) {
+            onTargetFrames++;
+            isOnTarget = true;
+            previousTarget = targetPos;
+            inFlightStepPx = Vector2(0, 0);
+            remainderX = 0.0;
+            remainderY = 0.0;
+            return Vector2(0, 0);
+        }
 
         if (distance <= ON_TARGET_THRESHOLD) {
             onTargetFrames++;
@@ -558,33 +562,21 @@ namespace g_AimAssist {
             isOnTarget = false;
         }
 
-        if (isOnTarget && distance <= static_cast<double>(g_Index::aim_deadzone)) {
-            return Vector2(0, 0);
-        }
-
         double jumpDistance = (targetPos - previousTarget).Len();
         bool isJumping = jumpDistance > TARGET_JUMP_THRESHOLD;
 
         if (isJumping && hasValidTarget) {
-            stableFrames = 0;
+            // 切換新目標時直接重置歷史基準與在途位移，達成 0ms 首幀瞬發
+            previousTarget = targetPos;
+            inFlightStepPx = Vector2(0, 0);
             isOnTarget = false;
             onTargetFrames = 0;
         }
-        else {
-            stableFrames++;
-        }
+        stableFrames++;
 
-        if (stableFrames < STABILITY_FRAMES) {
-            previousTarget = targetPos;
-            return Vector2(0, 0);
-        }
-
-        // 工業界標準步長平滑 (Smooth Divisor)：
-        // 將 Smoothing 真正轉化為調控「位移步長與到達目標之幀數」，體感極度顯著：
-        // 滑桿 1~5: 極速瞬移拉槍 (1~2 幀暴力拉頭)
-        // 滑桿 15~25: 自然真人手臂拉槍 (約 100~150ms 勻速自然吸附)
-        // 滑桿 40~80: 極度柔順慢速輔助瞄準
-        double smoothDivisor = 1.0 + (static_cast<double>(g_Index::kSmoothingFactor) * 0.35);
+        // 精準步長除數 (Smoothness = 1 時嚴格對應除數 1.0，实现 1:1 零衰減 RAGE 直通)：
+        int smoothSlider = (std::max)(1, g_Index::kSmoothingFactor);
+        double smoothDivisor = 1.0 + (static_cast<double>(smoothSlider - 1) * 0.35);
 
         // 擬人化肌肉神經非線性擾動 (Humanizer Speed Noise)
         if (g_Index::aim_humanizer_enabled) {
@@ -592,33 +584,79 @@ namespace g_AimAssist {
             smoothDivisor *= humanNoise;
         }
 
-        // 進圈動態阻尼煞車 (Error-scaled Dynamic Braking)：
-        // 進入頭部周圍 (<16px) 時等比平滑制動，徹底根治由下往上甩槍衝破頭頂的慣性過衝
-        double settleDamping = 1.0;
-        if (distance < 16.0) {
-            settleDamping = 0.45 + 0.55 * (distance / 16.0);
-        }
-
-        // 微分阻尼 (D-term 速度煞車)：
-        // 偵測拉槍瞬時速度，在高速接近目標時自動產生反向阻尼，徹底吸收動能，防止 Overshoot
         Vector2 errorDelta = targetPos - previousTarget;
         previousTarget = targetPos;
-        double dGain = 0.12;
 
-        double stepX = (targetPos.x / smoothDivisor) * settleDamping - (errorDelta.x * dGain);
-        double stepY = (targetPos.y / smoothDivisor) * settleDamping - (errorDelta.y * dGain);
+        // 預設使用當前視覺誤差
+        Vector2 effectiveError = targetPos;
+        double settleDamping = 1.0;
+        double dX = 0.0;
+        double dY = 0.0;
 
-        currentTarget = Vector2(stepX, stepY);
+        if (g_Index::aim_damping_enabled) {
+            // 1. Smith Predictor 在途位移預測扣除 (In-Flight Pipeline Compensation)：
+            // 若上一幀剛發送了大步長甩槍指令，而當前擷取畫面尚未完全反映該位移，自動扣除 38% 在途殘餘量，
+            // 讓第 1 幀可暴力打出 88% 極速步長，第 2 幀自動精準收斂最後 12% 而不重疊過衝！
+            if (targetPos.x * inFlightStepPx.x > 0.0) {
+                double compX = inFlightStepPx.x * 0.38;
+                if (std::abs(compX) < std::abs(targetPos.x) * 0.75) effectiveError.x -= compX;
+            }
+            if (targetPos.y * inFlightStepPx.y > 0.0) {
+                double compY = inFlightStepPx.y * 0.38;
+                if (std::abs(compY) < std::abs(targetPos.y) * 0.75) effectiveError.y -= compY;
+            }
+
+            double effDist = effectiveError.Len();
+
+            // 2. Meyer 最優子運動兩階段模型 (Meyer's Optimal Submovement Model)：
+            // 初段 (> 12px) 100% 全速推進；終端 (<= 12px) Hermite 曲線平滑收斂至 0.48x，快速吸停不拖泥帶水
+            if (effDist < 12.0) {
+                double normDist = clamp((effDist - deadzone) / (std::max)(1.0, 12.0 - deadzone), 0.0, 1.0);
+                double smoothRatio = normDist * normDist * (3.0 - 2.0 * normDist);
+                settleDamping = 0.48 + 0.52 * smoothRatio;
+            }
+
+            // 3. 微分阻尼 (D-term 速度煞車)：
+            double dGain = 0.14;
+            double pXTemp = (effectiveError.x / smoothDivisor) * settleDamping;
+            double pYTemp = (effectiveError.y / smoothDivisor) * settleDamping;
+            dX = (effectiveError.x * errorDelta.x < 0.0) ? clamp(errorDelta.x * dGain, -std::abs(pXTemp) * 0.65, std::abs(pXTemp) * 0.65) : 0.0;
+            dY = (effectiveError.y * errorDelta.y < 0.0) ? clamp(errorDelta.y * dGain, -std::abs(pYTemp) * 0.65, std::abs(pYTemp) * 0.65) : 0.0;
+        }
+
+        double pX = (effectiveError.x / smoothDivisor) * settleDamping;
+        double pY = (effectiveError.y / smoothDivisor) * settleDamping;
+
+        currentTarget = Vector2(pX + dX, pY + dY);
         return currentTarget;
     }
 
     void ExecuteMovement(const Vector2& stepDelta) {
         double distance = stepDelta.Len();
-        if (distance < 0.05) return;
+        if (distance < 0.05) {
+            inFlightStepPx = Vector2(0, 0);
+            return;
+        }
 
-        // 結合 X/Y 軸獨立靈敏度輸出最終物理像素位移 (stepDelta 已包含 Smoothing 步長除數與進圈阻尼煞車)
-        double moveX = stepDelta.x * (g_Index::kSensitivityX * 2.2);
-        double moveY = stepDelta.y * (g_Index::kSensitivityY * 2.2);
+        // 反向殘差清零保護 (Sign-Flip Residual Reset)：當修正方向反轉時立即清零舊方向殘差，防止過衝橫跳
+        if ((stepDelta.x * remainderX) < 0.0) remainderX = 0.0;
+        if ((stepDelta.y * remainderY) < 0.0) remainderY = 0.0;
+
+        // 幾何軌跡「略微欠甩 (Underflick Envelope)」硬性約束 (於像素空間約束單幀最大推進比 <= 88%)：
+        double clampedStepX = stepDelta.x;
+        double clampedStepY = stepDelta.y;
+        if (g_Index::aim_damping_enabled && hasValidTarget) {
+            double maxStepPxX = std::abs(activeAimError.x) * 0.88;
+            double maxStepPxY = std::abs(activeAimError.y) * 0.88;
+            clampedStepX = clamp(clampedStepX, -maxStepPxX, maxStepPxX);
+            clampedStepY = clamp(clampedStepY, -maxStepPxY, maxStepPxY);
+        }
+
+        // 將像素步長乘上物理轉換增益 (K_phys = counts/px = kSensitivity * 2.2) 轉為滑鼠硬體 Counts
+        double scaleX = (std::max)(0.05, static_cast<double>(g_Index::kSensitivityX) * 2.2);
+        double scaleY = (std::max)(0.05, static_cast<double>(g_Index::kSensitivityY) * 2.2);
+        double moveX = clampedStepX * scaleX;
+        double moveY = clampedStepY * scaleY;
 
         remainderX += moveX;
         remainderY += moveY;
@@ -633,8 +671,12 @@ namespace g_AimAssist {
         remainderY -= stepY;
 
         if (stepX != 0 || stepY != 0) {
+            // 記錄本幀實際送出的等效像素步長供下一幀 Smith Predictor 扣除在途延遲
+            inFlightStepPx = Vector2(stepX / scaleX, stepY / scaleY);
             // 直接發送 km.move_now，消除 Makcu 韌體佇列延遲，實現 144 FPS 極速響應
             g_Index::g_makcuDevice.mouseMove(stepX, stepY);
+        } else {
+            inFlightStepPx = Vector2(0, 0);
         }
     }
 
@@ -643,13 +685,17 @@ namespace g_AimAssist {
         Vector2 rawTarget = FindTargetCentroid(frame);
 
         if (hasValidTarget) {
-            activeAimError = ApplyHitboxOffset(rawTarget);
+            activeAimError = ApplyHitboxOffset(rawTarget, true);
+            atomicAimErrorLen.store(activeAimError.Len());
         } else {
             activeAimError = Vector2(999.0, 999.0);
+            atomicAimErrorLen.store(999.0);
+            atomicCrosshairInside.store(false);
         }
 
         if (!isBindHeld.load() || !g_Index::assistance_enabled) {
             currentTarget = Vector2(0, 0);
+            inFlightStepPx = Vector2(0, 0);
             remainderX = 0.0;
             remainderY = 0.0;
             isOnTarget = false;
@@ -659,6 +705,7 @@ namespace g_AimAssist {
         }
 
         if (!hasValidTarget) {
+            inFlightStepPx = Vector2(0, 0);
             remainderX = 0.0;
             remainderY = 0.0;
             isOnTarget = false;
@@ -740,9 +787,7 @@ namespace g_AimAssist {
                 GdiFlush();
                 UpdateNDIFrameReceived();
 
-                ProcessFrame(frameBGRA);
-
-                // --- RCS (Recoil Control System) 後座力壓槍補償 ---
+                // --- RCS (Recoil Control System) 閉迴路/開迴路協同壓槍補償 ---
                 static auto lbuttonDownTime = clock::now();
                 static bool lbuttonWasHeld = false;
                 static double rcsRemainderY = 0.0;
@@ -755,25 +800,37 @@ namespace g_AimAssist {
                 } else if (!lbuttonHeld) {
                     lbuttonWasHeld = false;
                     rcsRemainderY = 0.0;
+                    currentRcsOffsetY = 0.0;
                 }
 
                 if (g_Index::rcs_enabled && lbuttonHeld) {
                     auto sprayMs = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - lbuttonDownTime).count();
-                    if (sprayMs >= g_Index::rcs_delay_ms) {
-                        // 在 144 FPS 下 (每 6.94ms)，持續平穩累積向下壓槍位移
-                        rcsRemainderY += (static_cast<double>(g_Index::rcs_strength) * 0.12);
-                        int rcsStepY = static_cast<int>(std::lround(rcsRemainderY));
-                        if (rcsStepY > 0) {
-                            rcsRemainderY -= rcsStepY;
-                            if (!g_Index::assistance_enabled || !isBindHeld.load() || !hasValidTarget) {
+                    // 僅在連射超過延遲門檻，且未超過垂直後座力上限 (delay + 700ms) 時進行垂直壓槍補償
+                    if (sprayMs >= g_Index::rcs_delay_ms && sprayMs <= g_Index::rcs_delay_ms + 700) {
+                        double activeSprayMs = static_cast<double>(sprayMs - g_Index::rcs_delay_ms);
+                        if (g_Index::assistance_enabled && isBindHeld.load() && hasValidTarget) {
+                            // 閉迴路耦合壓槍：依 Hermite S 曲線平滑下移目標點 Y 偏移 (對應彈道上揚像素差)
+                            double t = clamp(activeSprayMs / 550.0, 0.0, 1.0);
+                            double smoothProg = t * t * (3.0 - 2.0 * t);
+                            currentRcsOffsetY = smoothProg * static_cast<double>(g_Index::rcs_strength) * 7.5;
+                            rcsRemainderY = 0.0;
+                        } else if (isBindHeld.load()) {
+                            // 開迴路盲壓：結合垂直靈敏度轉換比 (kSensitivityY * 2.2) 將壓槍像素速度轉為硬體 Counts
+                            currentRcsOffsetY = 0.0;
+                            double countsPerPxY = (std::max)(0.5, static_cast<double>(g_Index::kSensitivityY) * 2.2);
+                            rcsRemainderY += (static_cast<double>(g_Index::rcs_strength) * 0.32 * countsPerPxY);
+                            int rcsStepY = static_cast<int>(std::lround(rcsRemainderY));
+                            if (rcsStepY > 0) {
+                                rcsRemainderY -= rcsStepY;
                                 g_Index::g_makcuDevice.mouseMove(0, rcsStepY);
-                            } else {
-                                std::lock_guard<std::mutex> lock(targetStateMutex);
-                                remainderY += rcsStepY;
                             }
                         }
                     }
+                } else {
+                    currentRcsOffsetY = 0.0;
                 }
+
+                ProcessFrame(frameBGRA);
 
                 // --- Triggerbot 自動開火邏輯 (遵循 Makcu 官方 API km.click) ---
                 static auto lastTriggerTime = clock::now();
@@ -826,11 +883,12 @@ namespace g_AimAssist {
 
                     if ((outlineHit || aimLockedHit) && aimFlickGatePass && !triggerFiringLock.load() && cooldownDur >= g_Index::trigger_cooldown_ms) {
                         lastTriggerTime = now;
-                        lastShotTimestamp = now;
                         triggerFlashFrames = 12;
 
                         int delayMs = g_Index::trigger_delay_ms;
-                        int holdMs = g_Index::trigger_click_duration;
+                        // 契合報告第 3 點：若使用者維持預設 50ms，自動在 35~50ms 區間進行微秒級隨機化，兼顧極速擊發與自然微動特徵
+                        int baseHold = g_Index::trigger_click_duration;
+                        int holdMs = (baseHold >= 35 && baseHold <= 55) ? (35 + (rand() % 16)) : baseHold;
                         if (delayMs <= 0 && g_Index::g_makcuDevice.isUdpMode()) {
                             g_Index::g_makcuDevice.click(1, 1, holdMs);
                         } else {
@@ -839,7 +897,7 @@ namespace g_AimAssist {
                                 if (delayMs > 0) {
                                     std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
                                 }
-                                if (!g_Index::assistance_enabled || !isBindHeld.load() || activeAimError.Len() <= 14.0 || crosshairInsideEnemy) {
+                                if (!g_Index::assistance_enabled || !isBindHeld.load() || atomicAimErrorLen.load() <= 14.0 || atomicCrosshairInside.load()) {
                                     g_Index::g_makcuDevice.click(1, 1, holdMs);
                                 }
                                 triggerFiringLock.store(false);
@@ -903,7 +961,7 @@ namespace g_AimAssist {
                     }
 
                     if (hasValidTarget) {
-                        Vector2 offsetTarget = ApplyHitboxOffset(Vector2(debugTargetX, debugTargetY));
+                        Vector2 offsetTarget = ApplyHitboxOffset(Vector2(debugTargetX, debugTargetY), false);
                         cv::Point targetPoint(cx + static_cast<int>(offsetTarget.x),
                             cy + static_cast<int>(offsetTarget.y));
                         cv::Scalar targetColor = isBindHeld.load() ? cv::Scalar(0, 255, 0) : cv::Scalar(255, 255, 255);

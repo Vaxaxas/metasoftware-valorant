@@ -19,16 +19,12 @@ namespace g_Index {
     constexpr const double kScreenCenterX = kScreenWidth / 2;
     constexpr const double kScreenCenterY = kScreenHeight / 2;
 
-    inline double kSlowdownThreshold = 20;
-    inline float kSensitivity = 0.35f;
-    inline float kSensitivityX = 0.35f; // X 軸水平瞄準速度
-    inline float kSensitivityY = 0.35f; // Y 軸垂直瞄準速度
-    inline int kSmoothingFactor = 1;
+    inline float kSensitivityX = 1.72f; // RAGE X 軸水平速度 (Sens=0.25 / 1600 DPI 單幀 88% 物理推進)
+    inline float kSensitivityY = 1.52f; // RAGE Y 軸垂直速度 (單幀 78% 垂直推進，瞬鎖頭線零過衝)
+    inline int kSmoothingFactor = 1;    // RAGE 零平滑直通 (Smoothness=1 -> Divisor=1.0)
     inline int kFOV = 65;
-    inline float aim_deadzone = 2.5f;        // 瞄準死區半徑 (px，GUI 可即時調整，預設 2.5px)
-    inline bool kPreferUppermost = false;
-    inline bool kPreferTorso = false;
-    inline bool kPreferLowermost = false;
+    inline float aim_deadzone = 1.8f;        // RAGE 瞄準死區半徑 (1.8px 緊湊鎖頭)
+    inline bool aim_damping_enabled = true;  // 進圈動態阻尼與微分煞車開關 (防止甩槍過衝)
     inline int aim_key = 1; // 預設 1 = RIGHT (右鍵)
     inline int hitbox = 0;
     inline int aim_method = 0; // 0 = MOVE (原版相對平滑), 1 = SILENCE (Makcu km.moveto 座標直接傳送)

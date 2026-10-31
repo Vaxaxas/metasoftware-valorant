@@ -42,8 +42,6 @@ namespace makcu {
         void click(int button = 1, int count = 1, int hold_ms = 50);
         void mouseMove(int dx, int dy);
         void mouseMoveTo(int absX, int absY);
-        void mouseSilent(int absX, int absY);
-        void mouseMoveBezier(double x, double y, int duration_ms, double targetX, double targetY);
 
         std::string getTargetAddress() const;
 

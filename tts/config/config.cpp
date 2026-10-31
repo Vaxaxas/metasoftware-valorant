@@ -17,13 +17,12 @@ namespace g_Config {
             json j;
 
             j["aim"]["enabled"] = g_Index::assistance_enabled;
-            j["aim"]["kSlowdownThreshold"] = g_Index::kSlowdownThreshold;
-            j["aim"]["kSensitivity"] = g_Index::kSensitivity;
             j["aim"]["kSensitivityX"] = g_Index::kSensitivityX;
             j["aim"]["kSensitivityY"] = g_Index::kSensitivityY;
             j["aim"]["kSmoothingFactor"] = g_Index::kSmoothingFactor;
             j["aim"]["fov"] = g_Index::kFOV;
             j["aim"]["deadzone"] = g_Index::aim_deadzone;
+            j["aim"]["damping_enabled"] = g_Index::aim_damping_enabled;
             j["aim"]["key"] = g_Index::aim_key;
             j["aim"]["hitbox"] = g_Index::hitbox;
             j["aim"]["method"] = g_Index::aim_method;
@@ -75,11 +74,10 @@ namespace g_Config {
             if (j.contains("aim")) {
                 const auto& aim = j["aim"];
                 if (aim.contains("enabled")) g_Index::assistance_enabled = aim["enabled"].get<bool>();
-                if (aim.contains("kSlowdownThreshold")) g_Index::kSlowdownThreshold = aim["kSlowdownThreshold"].get<double>();
                 if (aim.contains("kSensitivity")) {
-                    g_Index::kSensitivity = aim["kSensitivity"].get<float>();
-                    g_Index::kSensitivityX = g_Index::kSensitivity;
-                    g_Index::kSensitivityY = g_Index::kSensitivity;
+                    float legacySens = aim["kSensitivity"].get<float>();
+                    g_Index::kSensitivityX = legacySens;
+                    g_Index::kSensitivityY = legacySens;
                 }
                 if (aim.contains("kSensitivityX")) g_Index::kSensitivityX = aim["kSensitivityX"].get<float>();
                 if (aim.contains("kSensitivityY")) g_Index::kSensitivityY = aim["kSensitivityY"].get<float>();
@@ -91,6 +89,9 @@ namespace g_Config {
                 if (aim.contains("deadzone")) {
                     g_Index::aim_deadzone = aim["deadzone"].get<float>();
                     if (g_Index::aim_deadzone < 0.0f || g_Index::aim_deadzone > 20.0f) g_Index::aim_deadzone = 2.5f;
+                }
+                if (aim.contains("damping_enabled")) {
+                    g_Index::aim_damping_enabled = aim["damping_enabled"].get<bool>();
                 }
                 if (aim.contains("key")) {
                     g_Index::aim_key = aim["key"].get<int>();
@@ -196,13 +197,12 @@ namespace g_Config {
             json j;
 
             j["aim"]["enabled"] = g_Index::assistance_enabled;
-            j["aim"]["kSlowdownThreshold"] = g_Index::kSlowdownThreshold;
-            j["aim"]["kSensitivity"] = g_Index::kSensitivity;
             j["aim"]["kSensitivityX"] = g_Index::kSensitivityX;
             j["aim"]["kSensitivityY"] = g_Index::kSensitivityY;
             j["aim"]["kSmoothingFactor"] = g_Index::kSmoothingFactor;
             j["aim"]["fov"] = g_Index::kFOV;
             j["aim"]["deadzone"] = g_Index::aim_deadzone;
+            j["aim"]["damping_enabled"] = g_Index::aim_damping_enabled;
             j["aim"]["key"] = g_Index::aim_key;
             j["aim"]["hitbox"] = g_Index::hitbox;
             j["aim"]["method"] = g_Index::aim_method;

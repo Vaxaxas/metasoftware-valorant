@@ -271,7 +271,7 @@ int main(int argc, char* argv[]) {
         ShowWindow(consoleWnd, g_Index::showDebug ? SW_SHOW : SW_HIDE);
     }
 
-    timelog("kSensValue: %.2f", g_Index::kSensitivity);
+    timelog("kSensValue: X=%.2f, Y=%.2f", g_Index::kSensitivityX, g_Index::kSensitivityY);
     timelog("Triggerbot: %s (Bind: %s, FOV: %d px, Delay: %d ms, Cooldown: %d ms)",
         g_Index::trigger_enabled ? "ENABLED" : "DISABLED",
         GetTriggerBindName(g_Index::trigger_key),
@@ -479,6 +479,7 @@ int main(int argc, char* argv[]) {
                 ImGui::SliderInt("Smoothness", &g_Index::kSmoothingFactor, 1, 100, "%d"); ImGui::SameLine(); HelpMarker("The speed at which the aim assist will move to a given target");
                 ImGui::SliderInt("FOV", &g_Index::kFOV, 1, 150, "%d"); ImGui::SameLine(); HelpMarker("The FOV (Field of view) the aim assist will scan for targets within");
                 ImGui::SliderFloat("Deadzone", &g_Index::aim_deadzone, 0.0f, 10.0f, "%.1f px"); ImGui::SameLine(); HelpMarker("Target deadzone radius: inside this radius, mouse movement stops to prevent micro-jitter (default: 2.5 px)");
+                ImGui::Checkbox("Enable Damping (Anti-Overshoot)", &g_Index::aim_damping_enabled); ImGui::SameLine(); HelpMarker("Enables close-range dynamic braking and derivative (D-term) velocity damping to prevent overshooting the target");
                 if (ImGui::BeginCombo("Preferred Hitbox", (g_Index::hitbox >= 0 && g_Index::hitbox < IM_ARRAYSIZE(hitbox_options)) ? hitbox_options[g_Index::hitbox] : "HEAD")) {
                     for (int n = 0; n < IM_ARRAYSIZE(hitbox_options); n++) {
                         bool is_selected = (g_Index::hitbox == n);
