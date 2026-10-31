@@ -1,11 +1,19 @@
 {
     "aim": {
+        "deadzone": 2.5,
         "enabled": true,
         "fov": 65,
         "hitbox": 0,
+        "method": 0,
+        "humanizer_enabled": false,
+        "humanizer_strength": 1.0,
         "kSensitivity": 0.35,
+        "kSensitivityX": 0.35,
+        "kSensitivityY": 0.35,
         "kSlowdownThreshold": 20.0,
-        "key": 1
+        "key": 1,
+        "x_offset": 0,
+        "y_offset": 0
     },
     "debug": true,
     "image_processing": {
@@ -16,9 +24,14 @@
         "kDistanceThreshold": 250.0
     },
     "makcu": {
-        "ip": "192.168.137.19",
+        "ip": "pi.local",
         "port": 5005,
         "use_udp": true
+    },
+    "rcs": {
+        "delay_ms": 120,
+        "enabled": false,
+        "strength": 2.0
     },
     "safety": {
         "panic_button": 35

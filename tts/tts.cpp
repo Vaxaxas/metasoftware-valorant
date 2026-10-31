@@ -474,9 +474,11 @@ int main(int argc, char* argv[]) {
             ImGui::Checkbox("Enable Aim-Assist", &g_Index::assistance_enabled); 
 
             if (g_Index::assistance_enabled) {
-                ImGui::SliderFloat("Speed", &g_Index::kSensitivity, 0.01f, 10.0f, "%.3f"); ImGui::SameLine(); HelpMarker("The speed at which the aim assist will move to a given target");
+                ImGui::SliderFloat("Speed X", &g_Index::kSensitivityX, 0.01f, 10.0f, "%.3f"); ImGui::SameLine(); HelpMarker("Horizontal tracking speed on the X axis");
+                ImGui::SliderFloat("Speed Y", &g_Index::kSensitivityY, 0.01f, 10.0f, "%.3f"); ImGui::SameLine(); HelpMarker("Vertical tracking speed on the Y axis");
                 ImGui::SliderInt("Smoothness", &g_Index::kSmoothingFactor, 1, 100, "%d"); ImGui::SameLine(); HelpMarker("The speed at which the aim assist will move to a given target");
                 ImGui::SliderInt("FOV", &g_Index::kFOV, 1, 150, "%d"); ImGui::SameLine(); HelpMarker("The FOV (Field of view) the aim assist will scan for targets within");
+                ImGui::SliderFloat("Deadzone", &g_Index::aim_deadzone, 0.0f, 10.0f, "%.1f px"); ImGui::SameLine(); HelpMarker("Target deadzone radius: inside this radius, mouse movement stops to prevent micro-jitter (default: 2.5 px)");
                 if (ImGui::BeginCombo("Preferred Hitbox", (g_Index::hitbox >= 0 && g_Index::hitbox < IM_ARRAYSIZE(hitbox_options)) ? hitbox_options[g_Index::hitbox] : "HEAD")) {
                     for (int n = 0; n < IM_ARRAYSIZE(hitbox_options); n++) {
                         bool is_selected = (g_Index::hitbox == n);
@@ -489,6 +491,20 @@ int main(int argc, char* argv[]) {
                     }
                     ImGui::EndCombo();
                 } ImGui::SameLine(); HelpMarker("The hitbox the bot will prefer to aim at if available");
+
+                const char* aim_methods[] = { "MOVE (Original)", "SILENCE (Makcu moveto)" };
+                if (ImGui::BeginCombo("Method", (g_Index::aim_method >= 0 && g_Index::aim_method < 2) ? aim_methods[g_Index::aim_method] : "MOVE (Original)")) {
+                    for (int n = 0; n < 2; n++) {
+                        bool is_selected = (g_Index::aim_method == n);
+                        if (ImGui::Selectable(aim_methods[n], is_selected)) {
+                            g_Index::aim_method = n;
+                        }
+                        if (is_selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                } ImGui::SameLine(); HelpMarker("MOVE = Original smooth 144Hz relative tracking via km.move_now\nSILENCE = Directly teleports mouse to target absolute coordinates via Makcu km.moveto");
                 ImGui::Separator();
 
                 if (ImGui::BeginCombo("Bind", GetAimKeyName(g_Index::aim_key))) {
@@ -515,6 +531,24 @@ int main(int argc, char* argv[]) {
                 if (ImGui::Button("Reset Offsets")) {
                     g_Index::aim_x_offset = 0;
                     g_Index::aim_y_offset = 0;
+                }
+
+                ImGui::Separator();
+                ImGui::Checkbox("Enable RCS (Recoil Control System)", &g_Index::rcs_enabled);
+                ImGui::SameLine(); HelpMarker("Automatically compensates for weapon recoil by pulling down mouse when spraying");
+                if (g_Index::rcs_enabled) {
+                    ImGui::SliderFloat("RCS Strength", &g_Index::rcs_strength, 0.5f, 6.0f, "%.1f");
+                    ImGui::SameLine(); HelpMarker("Downwards compensation strength applied while spraying (holding left click)");
+                    ImGui::SliderInt("RCS Start Delay", &g_Index::rcs_delay_ms, 0, 300, "%d ms");
+                    ImGui::SameLine(); HelpMarker("Delay before RCS starts pulling down (prevents pulling down first-shot taps)");
+                }
+
+                ImGui::Separator();
+                ImGui::Checkbox("Enable Aim Humanizer", &g_Index::aim_humanizer_enabled);
+                ImGui::SameLine(); HelpMarker("Adds natural muscle micro-tremor and organic aim point wandering to simulate real human aiming");
+                if (g_Index::aim_humanizer_enabled) {
+                    ImGui::SliderFloat("Humanizer Strength", &g_Index::aim_humanizer_strength, 0.5f, 3.0f, "%.1f px");
+                    ImGui::SameLine(); HelpMarker("Amplitude of natural muscle tremor and target organic wander (default: 1.0 px)");
                 }
             }
         }

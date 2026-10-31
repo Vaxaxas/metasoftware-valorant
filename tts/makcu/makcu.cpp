@@ -12,7 +12,7 @@ namespace makcu {
         : m_connected(false),
           m_useUdp(false),
           m_udpSocket(INVALID_SOCKET),
-          m_targetHost("192.168.137.19"),
+          m_targetHost("pi.local"),
           m_targetPort(5005)
     {
         memset(&m_udpAddr, 0, sizeof(m_udpAddr));
@@ -29,7 +29,7 @@ namespace makcu {
     bool Device::connect(const std::string& host, int port) {
         disconnect();
 
-        m_targetHost = host.empty() ? "192.168.137.19" : host;
+        m_targetHost = host.empty() ? "pi.local" : host;
         m_targetPort = (port <= 0) ? 5005 : port;
 
         if (g_Index::makcu_use_udp) {
@@ -38,27 +38,50 @@ namespace makcu {
                 m_udpSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
                 if (m_udpSocket != INVALID_SOCKET) {
                     struct addrinfo hints = {};
-                    hints.ai_family = AF_INET;
+                    hints.ai_family = AF_INET; // 優先解析 IPv4
                     hints.ai_socktype = SOCK_DGRAM;
                     hints.ai_protocol = IPPROTO_UDP;
 
                     struct addrinfo* result = nullptr;
                     std::string portStr = std::to_string(m_targetPort);
+                    // 執行 DNS / mDNS 解析 (支援 pi.local 與標準域名)
                     if (getaddrinfo(m_targetHost.c_str(), portStr.c_str(), &hints, &result) == 0 && result != nullptr) {
-                        memcpy(&m_udpAddr, result->ai_addr, sizeof(m_udpAddr));
+                        bool foundIpv4 = false;
+                        for (struct addrinfo* ptr = result; ptr != nullptr; ptr = ptr->ai_next) {
+                            if (ptr->ai_family == AF_INET) {
+                                memcpy(&m_udpAddr, ptr->ai_addr, sizeof(m_udpAddr));
+                                foundIpv4 = true;
+                                break;
+                            }
+                        }
                         freeaddrinfo(result);
-                        m_useUdp = true;
-                        m_connected = true;
-                        timelog("Makcu connected via UDP to %s:%d", m_targetHost.c_str(), m_targetPort);
-                        // 測試發送一個微小探測封包或確認連線
-                        sendCommand("km.version()\r\n");
-                        return true;
+
+                        if (foundIpv4) {
+                            m_useUdp = true;
+                            m_connected = true;
+
+                            char resolvedIp[INET_ADDRSTRLEN] = { 0 };
+                            inet_ntop(AF_INET, &m_udpAddr.sin_addr, resolvedIp, sizeof(resolvedIp));
+                            timelog("Makcu DNS/mDNS resolved '%s' -> %s:%d (UDP Active)", m_targetHost.c_str(), resolvedIp, m_targetPort);
+
+                            // 校準 Makcu 虛擬螢幕尺寸，確保 km.moveto 絕對座標 100% 像素對齊
+                            int scrW = GetSystemMetrics(SM_CXSCREEN);
+                            int scrH = GetSystemMetrics(SM_CYSCREEN);
+                            char scrBuf[48];
+                            int scrLen = std::snprintf(scrBuf, sizeof(scrBuf), "km.screen(%d,%d)\r\n", scrW, scrH);
+                            if (scrLen > 0) {
+                                sendCommand(scrBuf);
+                            }
+
+                            // 測試發送微小探測封包確認連線
+                            sendCommand("km.version()\r\n");
+                            return true;
+                        }
                     }
-                    else {
-                        timelog("Failed to resolve Makcu address '%s', falling back to local mouse API.", m_targetHost.c_str());
-                        closesocket(m_udpSocket);
-                        m_udpSocket = INVALID_SOCKET;
-                    }
+
+                    timelog("Failed to resolve Makcu address '%s' via DNS/mDNS, falling back to local mouse API.", m_targetHost.c_str());
+                    closesocket(m_udpSocket);
+                    m_udpSocket = INVALID_SOCKET;
                 }
             }
         }
@@ -87,6 +110,11 @@ namespace makcu {
 
     std::string Device::getTargetAddress() const {
         if (m_useUdp) {
+            char ipStr[INET_ADDRSTRLEN] = { 0 };
+            inet_ntop(AF_INET, &m_udpAddr.sin_addr, ipStr, sizeof(ipStr));
+            if (ipStr[0] != '\0' && m_targetHost != ipStr) {
+                return m_targetHost + " (" + ipStr + "):" + std::to_string(m_targetPort);
+            }
             return m_targetHost + ":" + std::to_string(m_targetPort);
         }
         return "Local Windows Mouse API";
@@ -212,48 +240,54 @@ namespace makcu {
         }
     }
 
-    void Device::mouseMoveBezier(double x, double y, int duration_ms, double targetX, double targetY) {
-        int dx = static_cast<int>(std::lround(x));
-        int dy = static_cast<int>(std::lround(y));
-        if (dx == 0 && dy == 0) return;
-
+    void Device::mouseMoveTo(int absX, int absY) {
         if (m_useUdp) {
             std::lock_guard<std::mutex> lock(m_sendMutex);
             if (m_udpSocket != INVALID_SOCKET) {
-                char buf[96];
-                int len = 0;
-                double dist = std::sqrt(dx * dx + dy * dy);
-
-                // Makcu 官方 API 規範:
-                // 1. 微小位移 (<= 2px): 直接發送 km.move(dx, dy)，由韌體硬體計時器 AUTO 插值
-                // 2. 中距離 (3~14px): 採用分段線性插值 km.move(dx, dy, segments) 消除跳格
-                // 3. 甩槍遠距離 (>= 15px): 採用三次貝茲曲線 km.move(dx, dy, segments, cx1, cy1, cx2, cy2)
-                if (dist >= 15.0 && duration_ms >= 3) {
-                    int segments = (std::max)(3, (std::min)(duration_ms, 12));
-                    int cx1 = static_cast<int>(std::lround(dx * 0.28));
-                    int cy1 = static_cast<int>(std::lround(dy * 0.20));
-                    int cx2 = static_cast<int>(std::lround(dx * 0.72));
-                    int cy2 = static_cast<int>(std::lround(dy * 0.82));
-
-                    len = std::snprintf(buf, sizeof(buf), "km.move(%d,%d,%d,%d,%d,%d,%d)\r\n",
-                        dx, dy, segments, cx1, cy1, cx2, cy2);
-                }
-                else if (dist >= 3.0) {
-                    int segments = (std::max)(2, (std::min)(duration_ms, 6));
-                    len = std::snprintf(buf, sizeof(buf), "km.move(%d,%d,%d)\r\n", dx, dy, segments);
-                }
-                else {
-                    len = std::snprintf(buf, sizeof(buf), "km.move(%d,%d)\r\n", dx, dy);
-                }
-
+                char buf[64];
+                int len = std::snprintf(buf, sizeof(buf), "km.moveto(%d,%d)\r\n", absX, absY);
                 if (len > 0) {
                     sendto(m_udpSocket, buf, len, 0,
                         reinterpret_cast<const sockaddr*>(&m_udpAddr), sizeof(m_udpAddr));
                 }
             }
-        } else {
-            mouseMove(dx, dy);
         }
+        else {
+            int sw = (std::max)(1, GetSystemMetrics(SM_CXSCREEN));
+            int sh = (std::max)(1, GetSystemMetrics(SM_CYSCREEN));
+            INPUT input = {};
+            input.type = INPUT_MOUSE;
+            input.mi.dx = (absX * 65536) / sw;
+            input.mi.dy = (absY * 65536) / sh;
+            input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+            SendInput(1, &input, sizeof(INPUT));
+        }
+    }
+
+    void Device::mouseSilent(int absX, int absY) {
+        if (m_useUdp) {
+            std::lock_guard<std::mutex> lock(m_sendMutex);
+            if (m_udpSocket != INVALID_SOCKET) {
+                char buf[64];
+                int len = std::snprintf(buf, sizeof(buf), "km.silent(%d,%d)\r\n", absX, absY);
+                if (len > 0) {
+                    sendto(m_udpSocket, buf, len, 0,
+                        reinterpret_cast<const sockaddr*>(&m_udpAddr), sizeof(m_udpAddr));
+                }
+            }
+        }
+        else {
+            mouseMoveTo(absX, absY);
+            click(1, 1, 50);
+        }
+    }
+
+    void Device::mouseMoveBezier(double x, double y, int duration_ms, double targetX, double targetY) {
+        int dx = static_cast<int>(std::lround(x));
+        int dy = static_cast<int>(std::lround(y));
+        // 依照 Makcu 官方 V4.086/V4.095 規範：
+        // aim tools 必須全面採用 km.move_now 於下一個 USB Report 立即輸出，徹底消除 km.move 的韌體插值佇列與過衝
+        mouseMove(dx, dy);
     }
 }
 

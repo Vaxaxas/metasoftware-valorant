@@ -21,15 +21,23 @@ namespace g_Index {
 
     inline double kSlowdownThreshold = 20;
     inline float kSensitivity = 0.35f;
+    inline float kSensitivityX = 0.35f; // X 軸水平瞄準速度
+    inline float kSensitivityY = 0.35f; // Y 軸垂直瞄準速度
     inline int kSmoothingFactor = 1;
     inline int kFOV = 65;
+    inline float aim_deadzone = 2.5f;        // 瞄準死區半徑 (px，GUI 可即時調整，預設 2.5px)
     inline bool kPreferUppermost = false;
     inline bool kPreferTorso = false;
     inline bool kPreferLowermost = false;
     inline int aim_key = 1; // 預設 1 = RIGHT (右鍵)
     inline int hitbox = 0;
+    inline int aim_method = 0; // 0 = MOVE (原版相對平滑), 1 = SILENCE (Makcu km.moveto 座標直接傳送)
     inline int aim_x_offset = 0; // 水平偏移微調 (正值向右，負值向左)
     inline int aim_y_offset = 0; // 垂直偏移微調 (正值向下，負值向上)
+
+    // Aim Humanizer (擬人化微震與自然軌跡擾動)
+    inline bool aim_humanizer_enabled = false;
+    inline float aim_humanizer_strength = 1.0f; // 擬人化擾動幅度 (0.5 ~ 3.0px)
 
     inline int show_menu_key = VK_INSERT;
     inline bool fuser_enabled = false;
@@ -50,7 +58,12 @@ namespace g_Index {
     inline int trigger_cooldown_ms = 180;    // 每次開火後冷卻時間 (ms)
     inline int trigger_click_duration = 50;  // 點擊按住時間 (ms，符合 Makcu 35~75ms 規範)
 
-    inline std::string makcu_ip = "192.168.137.19";
+    // RCS (Recoil Control System 後座力壓槍補償系統)
+    inline bool rcs_enabled = false;
+    inline float rcs_strength = 2.0f;        // 垂直壓槍強度 (向下補償)
+    inline int rcs_delay_ms = 120;           // 壓槍啟動延遲 (ms，避開首發 1~2 顆精準點射)
+
+    inline std::string makcu_ip = "pi.local";
     inline int makcu_port = 5005;
     inline bool makcu_use_udp = true;
 

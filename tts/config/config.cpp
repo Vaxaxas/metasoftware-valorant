@@ -19,12 +19,22 @@ namespace g_Config {
             j["aim"]["enabled"] = g_Index::assistance_enabled;
             j["aim"]["kSlowdownThreshold"] = g_Index::kSlowdownThreshold;
             j["aim"]["kSensitivity"] = g_Index::kSensitivity;
+            j["aim"]["kSensitivityX"] = g_Index::kSensitivityX;
+            j["aim"]["kSensitivityY"] = g_Index::kSensitivityY;
             j["aim"]["kSmoothingFactor"] = g_Index::kSmoothingFactor;
             j["aim"]["fov"] = g_Index::kFOV;
+            j["aim"]["deadzone"] = g_Index::aim_deadzone;
             j["aim"]["key"] = g_Index::aim_key;
             j["aim"]["hitbox"] = g_Index::hitbox;
+            j["aim"]["method"] = g_Index::aim_method;
             j["aim"]["x_offset"] = g_Index::aim_x_offset;
             j["aim"]["y_offset"] = g_Index::aim_y_offset;
+            j["aim"]["humanizer_enabled"] = g_Index::aim_humanizer_enabled;
+            j["aim"]["humanizer_strength"] = g_Index::aim_humanizer_strength;
+
+            j["rcs"]["enabled"] = g_Index::rcs_enabled;
+            j["rcs"]["strength"] = g_Index::rcs_strength;
+            j["rcs"]["delay_ms"] = g_Index::rcs_delay_ms;
 
             j["trigger"]["enabled"] = g_Index::trigger_enabled;
             j["trigger"]["key"] = g_Index::trigger_key;
@@ -66,12 +76,22 @@ namespace g_Config {
                 const auto& aim = j["aim"];
                 if (aim.contains("enabled")) g_Index::assistance_enabled = aim["enabled"].get<bool>();
                 if (aim.contains("kSlowdownThreshold")) g_Index::kSlowdownThreshold = aim["kSlowdownThreshold"].get<double>();
-                if (aim.contains("kSensitivity")) g_Index::kSensitivity = aim["kSensitivity"].get<float>();
+                if (aim.contains("kSensitivity")) {
+                    g_Index::kSensitivity = aim["kSensitivity"].get<float>();
+                    g_Index::kSensitivityX = g_Index::kSensitivity;
+                    g_Index::kSensitivityY = g_Index::kSensitivity;
+                }
+                if (aim.contains("kSensitivityX")) g_Index::kSensitivityX = aim["kSensitivityX"].get<float>();
+                if (aim.contains("kSensitivityY")) g_Index::kSensitivityY = aim["kSensitivityY"].get<float>();
                 if (aim.contains("kSmoothingFactor")) {
                     g_Index::kSmoothingFactor = aim["kSmoothingFactor"].get<int>();
                     if (g_Index::kSmoothingFactor < 1 || g_Index::kSmoothingFactor > 100) g_Index::kSmoothingFactor = 1;
                 }
                 if (aim.contains("fov")) g_Index::kFOV = aim["fov"].get<int>();
+                if (aim.contains("deadzone")) {
+                    g_Index::aim_deadzone = aim["deadzone"].get<float>();
+                    if (g_Index::aim_deadzone < 0.0f || g_Index::aim_deadzone > 20.0f) g_Index::aim_deadzone = 2.5f;
+                }
                 if (aim.contains("key")) {
                     g_Index::aim_key = aim["key"].get<int>();
                     if (g_Index::aim_key < 0 || g_Index::aim_key > 5) g_Index::aim_key = 1;
@@ -79,6 +99,10 @@ namespace g_Config {
                 if (aim.contains("hitbox")) {
                     g_Index::hitbox = aim["hitbox"].get<int>();
                     if (g_Index::hitbox < 0 || g_Index::hitbox > 2) g_Index::hitbox = 0;
+                }
+                if (aim.contains("method")) {
+                    g_Index::aim_method = aim["method"].get<int>();
+                    if (g_Index::aim_method < 0 || g_Index::aim_method > 1) g_Index::aim_method = 0;
                 }
                 if (aim.contains("x_offset")) {
                     g_Index::aim_x_offset = aim["x_offset"].get<int>();
@@ -88,6 +112,19 @@ namespace g_Config {
                     g_Index::aim_y_offset = aim["y_offset"].get<int>();
                     if (g_Index::aim_y_offset < -20 || g_Index::aim_y_offset > 20) g_Index::aim_y_offset = 0;
                 }
+                if (aim.contains("humanizer_enabled")) g_Index::aim_humanizer_enabled = aim["humanizer_enabled"].get<bool>();
+                if (aim.contains("humanizer_strength")) {
+                    g_Index::aim_humanizer_strength = aim["humanizer_strength"].get<float>();
+                    if (g_Index::aim_humanizer_strength < 0.1f || g_Index::aim_humanizer_strength > 10.0f) g_Index::aim_humanizer_strength = 1.0f;
+                }
+            }
+
+            // RCS
+            if (j.contains("rcs")) {
+                const auto& rcs = j["rcs"];
+                if (rcs.contains("enabled")) g_Index::rcs_enabled = rcs["enabled"].get<bool>();
+                if (rcs.contains("strength")) g_Index::rcs_strength = rcs["strength"].get<float>();
+                if (rcs.contains("delay_ms")) g_Index::rcs_delay_ms = rcs["delay_ms"].get<int>();
             }
 
             // Trigger
@@ -161,12 +198,22 @@ namespace g_Config {
             j["aim"]["enabled"] = g_Index::assistance_enabled;
             j["aim"]["kSlowdownThreshold"] = g_Index::kSlowdownThreshold;
             j["aim"]["kSensitivity"] = g_Index::kSensitivity;
+            j["aim"]["kSensitivityX"] = g_Index::kSensitivityX;
+            j["aim"]["kSensitivityY"] = g_Index::kSensitivityY;
             j["aim"]["kSmoothingFactor"] = g_Index::kSmoothingFactor;
             j["aim"]["fov"] = g_Index::kFOV;
+            j["aim"]["deadzone"] = g_Index::aim_deadzone;
             j["aim"]["key"] = g_Index::aim_key;
             j["aim"]["hitbox"] = g_Index::hitbox;
+            j["aim"]["method"] = g_Index::aim_method;
             j["aim"]["x_offset"] = g_Index::aim_x_offset;
             j["aim"]["y_offset"] = g_Index::aim_y_offset;
+            j["aim"]["humanizer_enabled"] = g_Index::aim_humanizer_enabled;
+            j["aim"]["humanizer_strength"] = g_Index::aim_humanizer_strength;
+
+            j["rcs"]["enabled"] = g_Index::rcs_enabled;
+            j["rcs"]["strength"] = g_Index::rcs_strength;
+            j["rcs"]["delay_ms"] = g_Index::rcs_delay_ms;
 
             j["trigger"]["enabled"] = g_Index::trigger_enabled;
             j["trigger"]["key"] = g_Index::trigger_key;
